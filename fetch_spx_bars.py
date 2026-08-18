@@ -69,21 +69,46 @@ def et_time(epoch):
     return utc - timedelta(hours=4 if start <= utc < end else 5)
 
 
-def _get(query, soft=False):
+class TransportError(RuntimeError):
+    """curl could not complete the request — a timeout or reset, not a refusal from Yahoo."""
+
+
+def _get(query, soft=False, attempts=4):
+    """
+    One Yahoo chart request, retried on transport failure.
+
+    A transport failure and a refusal from Yahoo are different things and callers must be able
+    to tell them apart. `chart.error` means the request was out of range — for the 1-minute walk
+    that is the signal that history has run out and the walk is done. A timeout says nothing at
+    all about the data. Treating a timeout as "no more history" would truncate the archive
+    silently, and treating it as fatal throws away the tiers that have not been fetched yet;
+    unattended, one flaky request then costs a whole day of bars. So: refusal -> None when
+    `soft`, transport failure -> retried, then TransportError for the caller to handle.
+    """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{SYMBOL}?{query}"
-    out = subprocess.run(
-        ["curl", "-s", "--max-time", "45", "-A", UA, url],
-        capture_output=True, text=True,
-    )
-    if out.returncode != 0:
-        raise SystemExit("curl failed for %s: %s" % (query, out.stderr[:300]))
-    doc = json.loads(out.stdout)
-    err = doc.get("chart", {}).get("error")
-    if err:
-        if soft:
-            return None
-        raise SystemExit("Yahoo rejected %s: %s" % (query, err))
-    return doc["chart"]["result"][0]
+    last = ""
+    for attempt in range(1, attempts + 1):
+        out = subprocess.run(
+            ["curl", "-s", "--max-time", "60", "-A", UA, url],
+            capture_output=True, text=True,
+        )
+        if out.returncode:
+            last = "curl exit %d %s" % (out.returncode, out.stderr[:200].strip())
+        else:
+            try:
+                doc = json.loads(out.stdout)
+            except ValueError as exc:
+                last = "unparseable response (%s)" % exc
+            else:
+                err = doc.get("chart", {}).get("error")
+                if err:
+                    if soft:
+                        return None
+                    raise SystemExit("Yahoo rejected %s: %s" % (query, err))
+                return doc["chart"]["result"][0]
+        if attempt < attempts:
+            time.sleep(attempt * 5)
+    raise TransportError("%s after %d attempts: %s" % (query, attempts, last))
 
 
 def fetch(interval, rng):
@@ -106,8 +131,13 @@ def fetch_1m_chunks():
         start = end - ONE_MIN_CHUNK_DAYS * 86400
         if end <= floor:
             break
-        res = _get("interval=1m&period1=%d&period2=%d" % (max(start, floor), end),
-                   soft=True)
+        try:
+            res = _get("interval=1m&period1=%d&period2=%d" % (max(start, floor), end),
+                       soft=True)
+        except TransportError as exc:
+            # a chunk that would not load says nothing about the ones behind it — keep walking
+            print("  1m chunk unreachable, skipping: %s" % exc)
+            continue
         if res is None:
             break
         for date, rows in to_days(res).items():
@@ -202,16 +232,29 @@ def main():
                     help="fetch just one resolution")
     args = ap.parse_args()
 
+    attempted, failed = 0, []
     for label, subdir, interval, rng in FEEDS:
         if args.only and args.only != label:
             continue
-        days = fetch_1m_chunks() if rng == "chunked" else to_days(fetch(interval, rng))
+        attempted += 1
+        try:
+            days = fetch_1m_chunks() if rng == "chunked" else to_days(fetch(interval, rng))
+        except TransportError as exc:
+            print(f"{label:>3}  unreachable: {exc}")
+            failed.append(label)
+            continue
         written, skipped = write_days(days, subdir, args.force)
         span = f"{min(days)} → {max(days)}" if days else "nothing returned"
         print(f"{label:>3}  {span}   {len(days)} days available"
               f"   {written} written, {skipped} already archived")
 
     print(f"index.csv rebuilt: {rebuild_index()} dates")
+
+    # Partial success is still success: one unreachable tier must not discard the others, and
+    # the caller commits whatever landed. Only a clean sweep of failures is worth an error.
+    if failed:
+        print("tiers that could not be fetched: %s" % ", ".join(failed))
+    return 1 if failed and len(failed) == attempted else 0
 
 
 if __name__ == "__main__":

@@ -58,6 +58,8 @@ jobs:
           python3 fetch_daily.py
           python3 build_features.py
 
+      # always(), so a tier that fails still keeps whatever the other tiers fetched. The
+      # fetch step only reports failure when every tier was unreachable.
       - name: Commit archive
-        if: steps.guard.outputs.run == 'true'
+        if: ${{ always() && steps.guard.outputs.run == 'true' }}
         run: bash .github/commit-archive.sh 'bars post-close archive'
