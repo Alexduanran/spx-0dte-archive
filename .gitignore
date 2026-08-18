@@ -1,0 +1,12 @@
+# Run logs — they carry local filesystem paths and are pure noise in diffs.
+*.log
+
+.DS_Store
+__pycache__/
+*.pyc
+
+# Internal notes and the Option Alpha browser snippet stay out of the public archive
+# repo — they reference private strategy work and are not used by the CI pipeline,
+# which reads CBOE's public feed instead.
+NOTES.md
+fetch_gex.js

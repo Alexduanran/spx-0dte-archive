@@ -1,0 +1,34 @@
+# Morning half of the 0DTE gamma-exposure session poll.
+#
+# The cron is in UTC and the US switches between EDT (UTC-4) and EST (UTC-5), so a fixed UTC
+# time drifts an hour twice a year. Rather than chase that, this fires at 13:20 UTC — 09:20 EDT
+# or 08:20 EST — and gex_session.py sleeps to the next quarter hour and lets fetch_gex_poll.py
+# refuse anything before 09:25 ET. Under EST the job simply idles an extra hour, which the
+# 6-hour job cap comfortably absorbs.
+name: GEX poll (morning)
+
+on:
+  schedule:
+    - cron: '20 13 * * 1-5'
+  workflow_dispatch:        # so a run can be triggered by hand to verify the setup
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gex-archive        # never let two writers race on summary.csv
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Poll every 15 minutes until 12:35 ET
+        run: python3 gex_session.py --until 12:35
+
+      - name: Commit snapshots
+        if: always()
+        run: bash .github/commit-archive.sh 'gex morning session'

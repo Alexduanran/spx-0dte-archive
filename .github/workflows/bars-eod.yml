@@ -1,0 +1,60 @@
+# Post-close archive of SPX intraday bars, the daily VIX-complex table, and derived features.
+#
+# Two crons for one daily run: 20:35 UTC is 16:35 EDT, 21:35 UTC is 16:35 EST. Both fire every
+# weekday year-round, and the guard step drops the one that lands before the cash close. Running
+# twice on the odd day would be harmless anyway — fetch_spx_bars.py is additive and only ever
+# rewrites the current date.
+name: SPX bars (post-close)
+
+on:
+  schedule:
+    - cron: '35 20 * * 1-5'
+    - cron: '35 21 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gex-archive        # shares the archive with the GEX workflows — serialise the writers
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if the market has not closed yet in ET
+        id: guard
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import sys, os
+          sys.path.insert(0, '.')
+          from fetch_gex_poll import et_now, US_HOLIDAYS_2026
+          now = et_now()
+          why = None
+          if now.weekday() >= 5:
+              why = 'weekend'
+          elif now.strftime('%Y-%m-%d') in US_HOLIDAYS_2026:
+              why = 'market holiday'
+          elif now.hour * 60 + now.minute < 16 * 60 + 20:
+              why = 'before 16:20 ET (this is the off-season cron firing early)'
+          print('run=%s' % ('false' if why else 'true'))
+          print('note=%s ET%s' % (now.strftime('%Y-%m-%d %H:%M'), ' — skipping: ' + why if why else ''))
+          PY
+
+      - name: Report guard decision
+        run: echo "${{ steps.guard.outputs.note }}"
+
+      - name: Fetch intraday bars, daily series, and rebuild features
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          python3 fetch_spx_bars.py
+          python3 fetch_daily.py
+          python3 build_features.py
+
+      - name: Commit archive
+        if: steps.guard.outputs.run == 'true'
+        run: bash .github/commit-archive.sh 'bars post-close archive'
