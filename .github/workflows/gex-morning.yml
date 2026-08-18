@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Poll every 15 minutes until 12:35 ET
-        run: python3 gex_session.py --until 12:35
+        run: python3 gex_session.py --until 12:35 --commit
 
       - name: Commit snapshots
         if: always()

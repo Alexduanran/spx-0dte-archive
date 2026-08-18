@@ -15,8 +15,12 @@ The job is split morning/afternoon because a GitHub Actions job is capped at 6 h
 09:20-16:10 ET session under EST (when the UTC cron fires an hour early in local terms) would
 run 6h50m.
 
-  python3 gex_session.py --until 12:35        # morning half
-  python3 gex_session.py --until 16:10        # afternoon half
+  python3 gex_session.py --until 12:35            # morning half
+  python3 gex_session.py --until 16:10 --commit   # afternoon half, pushing as it goes
+
+--commit pushes after every snapshot rather than once at the end. A job holds open for three
+and a half hours, and an uncommitted runner that dies takes the whole half-session with it —
+data that has no source to re-fetch from. Committing per snapshot caps that loss at 15 minutes.
 
 Exits immediately, and successfully, on weekends and US market holidays — the cron fires every
 weekday and it is this script's job to decide there is nothing to do.
@@ -33,6 +37,7 @@ from fetch_gex_poll import et_now, US_HOLIDAYS_2026   # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 POLLER = os.path.join(HERE, 'fetch_gex_poll.py')
+COMMITTER = os.path.join(HERE, '.github', 'commit-archive.sh')
 
 
 def snapshot():
@@ -43,10 +48,19 @@ def snapshot():
     return r.returncode == 0
 
 
+def commit(label):
+    """Push what we have so far. Never fatal — a failed push must not end the session."""
+    r = subprocess.run(['bash', COMMITTER, 'gex snapshot ' + label],
+                       capture_output=True, text=True)
+    print((r.stdout + r.stderr).strip() or '(commit: no output)', flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--until', required=True, help='ET clock time to stop at, HH:MM')
     ap.add_argument('--every', type=int, default=15, help='cadence in minutes')
+    ap.add_argument('--commit', action='store_true',
+                    help='commit and push after each snapshot (CI); off for local runs')
     args = ap.parse_args()
 
     hh, mm = (int(x) for x in args.until.split(':'))
@@ -78,6 +92,8 @@ def main():
             break
         snapshot()
         taken += 1
+        if args.commit:
+            commit(now.strftime('%Y-%m-%d %H:%M ET'))
 
     print('gex_session: done, %d snapshots attempted' % taken)
     return 0
