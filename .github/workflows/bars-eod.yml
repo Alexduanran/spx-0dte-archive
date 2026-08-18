@@ -1,9 +1,12 @@
 # Post-close archive of SPX intraday bars, the daily VIX-complex table, and derived features.
 #
 # Two crons for one daily run: 20:35 UTC is 16:35 EDT, 21:35 UTC is 16:35 EST. Both fire every
-# weekday year-round, and the guard step drops the one that lands before the cash close. Running
-# twice on the odd day would be harmless anyway — fetch_spx_bars.py is additive and only ever
-# rewrites the current date.
+# weekday year-round and the guard below drops anything before 16:20 ET, so under EST only the
+# later one survives — but under EDT both do, and the job runs twice a day. That is accepted on
+# purpose. A tighter upper bound would look neater and would silently drop a trigger that fired
+# late, which GitHub's scheduler routinely does (an afternoon GEX cron set for 16:40 UTC was
+# observed firing at 17:02). The second run is cheap and writes nothing: fetch_spx_bars.py is
+# additive, only ever rewrites the current date, and the commit step exits on a clean tree.
 name: SPX bars (post-close)
 
 on:

@@ -117,7 +117,12 @@ Two scheduling details are deliberate and worth not "simplifying" away:
 - **The crons are set for EDT and tolerate EST.** A fixed UTC time drifts an hour twice a year.
   The GEX jobs simply start an hour early under EST and idle — `fetch_gex_poll.py` refuses
   anything outside 09:25–16:05 ET regardless. The bars job registers both 20:35 and 21:35 UTC
-  and a guard step drops whichever lands before the close.
+  and its guard step drops anything landing before 16:20 ET — so under EST the early cron is
+  dropped and the late one runs, while under EDT **both** pass and the job runs twice. That
+  slack is deliberate: a tighter upper bound would drop a genuinely late trigger, and GitHub's
+  delays are real (an afternoon GEX cron set for 16:40 UTC was observed firing at 17:02). The
+  duplicate run costs about a minute and writes nothing — `fetch_spx_bars.py` is additive and
+  the commit step exits when the tree is clean.
 
 Every script self-guards weekends and US market holidays, so a fire on a non-trading day exits
 in milliseconds without touching the network.
