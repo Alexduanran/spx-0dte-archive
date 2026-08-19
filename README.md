@@ -38,6 +38,7 @@ XSP is one tenth of SPX; multiply these prices by 0.1 for XSP-quoted comparisons
 │                         opening ranges, realised path length / trend efficiency
 ├── features/intraday.csv the same indicators computed on 5-minute bars, so an 11:15 reading
 │                         is scored with 11:15 information
+├── features/intraday_1m.csv  the same at 1-minute resolution — two EMA pairs, see below
 ├── gex/summary.csv       one row per snapshot — the derived gamma levels
 └── gex/profile/          near-the-money gamma/OI profile at each snapshot
 ```
@@ -95,6 +96,23 @@ holds the by-strike detail within ±2% of spot: `cg`/`pg` call/put gamma exposur
 **Snapshot time is part of the data.** A post-close file shows gamma that is exactly zero
 everywhere except a narrow band around spot — that is the expiry gamma spike, not corruption.
 Compare like with like, or days will not be comparable.
+
+## Two EMA pairs in `features/intraday_1m.csv`
+
+`ema20`/`ema50` restart every morning. No overnight gap leaks into them, but they are undefined
+until enough bars have accumulated — on 1-minute bars that is **09:49** for EMA20 and **10:19**
+for EMA50, which is after a 15-minute opening-range entry has already been taken. Across the
+archive they carry a value on 95.1% and 87.4% of bars.
+
+`ema20_cont`/`ema50_cont` run unbroken across the whole archive, so they hold a value from the
+first bar of the day (99.8% / 99.5% coverage) at the cost of folding the overnight gap in. On
+2026-08-18 the index opened at 7704.16 after a 7746.14 close, and `ema20_cont` was still sitting
+at 7744.52 — forty points above spot, describing yesterday rather than today. By the close the
+two pairs agree exactly, the seed having long since washed out.
+
+Neither is correct in the abstract. Use the reset pair to describe a session on its own terms,
+and the continuous pair when a signal has to exist early in the day — and never compare one
+against the other across the 09:49/10:19 boundary.
 
 ## Automation
 

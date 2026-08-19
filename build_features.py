@@ -12,6 +12,10 @@ Two outputs, both keyed so they can be joined onto a bot's position log:
                               family computed on 5-minute bars, so an entry at 11:15 can be
                               scored with what was actually knowable at 11:15.
 
+  data/features/intraday_1m.csv  the same at 1-minute resolution, matching the bots' 1-minute
+                              scan interval so a fill timestamp lines up bar-for-bar. Carries
+                              two EMA pairs — see build_intraday's docstring for why.
+
 Inputs: data/spx-{1m,5m,1h}/ (see README.md) and data/daily/_raw_*.json from fetch_daily.py.
 
 Everything here is computed from the local archive — no network. Re-run any time.
@@ -183,45 +187,86 @@ def build_daily():
 
 # ---------------------------------------------------------------- intraday table
 
-def build_intraday(start=None, end=None):
-    files = sorted(p.stem for p in (ROOT / 'spx-5m').glob('*.csv'))
-    if start:
-        files = [d for d in files if d >= start]
-    if end:
-        files = [d for d in files if d <= end]
-    out_rows = []
+def build_intraday(res='5m', out_name='intraday.csv', min_bars=30, continuous=False):
+    """
+    One row per (date, bar) with the indicator family computed on `res` bars, so a decision
+    made at 11:15 is scored with what was knowable at 11:15 and nothing later.
+
+    `continuous` adds a second pair of EMA columns, and the distinction matters more than it
+    looks. The plain `ema20`/`ema50` restart every morning: no overnight gap leaks into them,
+    but they are undefined until enough bars have accumulated — on 1-minute bars that is 09:49
+    for EMA20 and 10:19 for EMA50, which is *after* a 15-minute opening-range entry has already
+    been taken. `ema20_cont`/`ema50_cont` run unbroken across the whole archive, so they carry a
+    value from the first bar of the day, at the cost of folding the overnight gap in. Neither is
+    right in the abstract — use the reset pair to describe the session on its own terms, and the
+    continuous pair when a signal has to exist early in the day.
+    """
+    files = sorted(p.stem for p in (ROOT / f'spx-{res}').glob('*.csv'))
+    days = []
     for d in files:
-        res, bb = load_bars(d, prefer=('5m',))
-        if not bb or len(bb) < 30:
-            continue
+        _, bb = load_bars(d, prefer=(res,))
+        if bb and len(bb) >= min_bars:
+            days.append((d, bb))
+    if not days:
+        print(f'features/{out_name:14s} no {res} bars found')
+        return
+
+    # computed over the concatenated archive, then sliced back per day
+    flat20 = flat50 = None
+    if continuous:
+        flat = [x[4] for _, bb in days for x in bb]
+        flat20, flat50 = ema(flat, 20), ema(flat, 50)
+
+    out_rows, base = [], 0
+    for d, bb in days:
         cl = [x[4] for x in bb]
         e20, e50 = ema(cl, 20), ema(cl, 50)
         r14 = rsi(cl, 14)
         a14 = atr(bb, 14)
         day_open = bb[0][1]
+        # running accumulators — the previous version rescanned the day at every bar, which is
+        # fine at 78 bars and quadratic at 390
+        hi = lo = None
+        plen = 0.0
         for i, (t, o, h, l, c) in enumerate(bb):
-            hi = max(x[2] for x in bb[: i + 1])
-            lo = min(x[3] for x in bb[: i + 1])
-            plen = sum(abs(cl[j] - cl[j - 1]) for j in range(1, i + 1))
-            out_rows.append(dict(
+            hi = h if hi is None else max(hi, h)
+            lo = l if lo is None else min(lo, l)
+            if i:
+                plen += abs(cl[i] - cl[i - 1])
+            row = dict(
                 date=d, time='%02d:%02d' % (t // 60, t % 60), close=c,
                 ema20=round(e20[i], 2) if e20[i] else None,
                 ema50=round(e50[i], 2) if e50[i] else None,
                 px_vs_ema20=round(c - e20[i], 2) if e20[i] else None,
+                px_vs_ema50=round(c - e50[i], 2) if e50[i] else None,
                 ema20_vs_50=round(e20[i] - e50[i], 2) if e20[i] and e50[i] else None,
                 rsi14=round(r14[i], 2) if r14[i] else None,
                 atr14=round(a14[i], 3) if a14[i] else None,
                 sofar_range=round(hi - lo, 2),
                 sofar_path=round(plen, 2),
                 sofar_eff=round(abs(c - day_open) / plen, 3) if plen else None,
-                vs_day_open=round(c - day_open, 2)))
-    with (OUT / 'intraday.csv').open('w', newline='') as f:
+                vs_day_open=round(c - day_open, 2))
+            if continuous:
+                j = base + i
+                row.update(
+                    ema20_cont=round(flat20[j], 2) if flat20[j] else None,
+                    ema50_cont=round(flat50[j], 2) if flat50[j] else None,
+                    px_vs_ema20_cont=round(c - flat20[j], 2) if flat20[j] else None,
+                    px_vs_ema50_cont=round(c - flat50[j], 2) if flat50[j] else None,
+                    ema20_vs_50_cont=(round(flat20[j] - flat50[j], 2)
+                                      if flat20[j] and flat50[j] else None))
+            out_rows.append(row)
+        base += len(bb)
+
+    with (OUT / out_name).open('w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))
         w.writeheader()
         w.writerows(out_rows)
-    print(f'features/intraday.csv  {len(out_rows):5d} rows  {files[0]} -> {files[-1]}  (5m)')
+    print(f'features/{out_name:14s} {len(out_rows):6d} rows  '
+          f'{days[0][0]} -> {days[-1][0]}  ({res})')
 
 
 if __name__ == '__main__':
     build_daily()
-    build_intraday()
+    build_intraday('5m', 'intraday.csv', min_bars=30)
+    build_intraday('1m', 'intraday_1m.csv', min_bars=100, continuous=True)
