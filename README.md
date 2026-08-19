@@ -103,8 +103,8 @@ Three GitHub Actions workflows keep this current. They need no secrets: `GITHUB_
 
 | Workflow | Cron (UTC) | What it does |
 |---|---|---|
-| `gex-morning.yml` | `20 13 * * 1-5` | holds one job open, snapshotting every quarter hour until 12:35 ET |
-| `gex-afternoon.yml` | `40 16 * * 1-5` | same, 12:40 → 16:10 ET |
+| `gex-morning.yml` | `20 12 * * 1-5` | holds one job open, snapshotting every quarter hour until 12:35 ET |
+| `gex-afternoon.yml` | `10 16 * * 1-5` | same, until 16:10 ET; queues behind the morning half |
 | `bars-eod.yml` | `35 20`, `35 21 * * 1-5` | after the close: intraday bars, daily series, rebuild features |
 
 Two scheduling details are deliberate and worth not "simplifying" away:
@@ -114,6 +114,15 @@ Two scheduling details are deliberate and worth not "simplifying" away:
   which would leave the series ragged and gapped. Instead each run holds a single job open for
   its half of the session and sleeps to each quarter hour itself, so only the *start* depends on
   the scheduler. The session is split in two because a job is capped at **6 hours**.
+- **Both GEX crons start over an hour early on purpose.** Only the start depends on the
+  scheduler, but that start still has to arrive before the first snapshot is due. Measured
+  lateness on this repo: a `40 16` afternoon trigger started at 17:02, and a `20 13` morning
+  trigger started at 13:59 — 39 minutes late, which cost the 09:30 and 09:45 snapshots. Those
+  are the two worst of the day to lose, because the 0DTE profile is at its most informative
+  before it collapses onto the at-the-money spike. The crons now fire at 12:20 and 16:10 UTC so
+  that even a 45-minute delay lands in time; the early start does no work and costs nothing,
+  since the poller refuses anything outside 09:25–16:05 ET. The afternoon run simply queues on
+  the shared concurrency group until the morning half exits at 12:35 ET.
 - **The crons are set for EDT and tolerate EST.** A fixed UTC time drifts an hour twice a year.
   The GEX jobs simply start an hour early under EST and idle — `fetch_gex_poll.py` refuses
   anything outside 09:25–16:05 ET regardless. The bars job registers both 20:35 and 21:35 UTC

@@ -1,15 +1,21 @@
 # Morning half of the 0DTE gamma-exposure session poll.
 #
-# The cron is in UTC and the US switches between EDT (UTC-4) and EST (UTC-5), so a fixed UTC
-# time drifts an hour twice a year. Rather than chase that, this fires at 13:20 UTC — 09:20 EDT
-# or 08:20 EST — and gex_session.py sleeps to the next quarter hour and lets fetch_gex_poll.py
-# refuse anything before 09:25 ET. Under EST the job simply idles an extra hour, which the
-# 6-hour job cap comfortably absorbs.
+# Starts deliberately early — 12:20 UTC is 08:20 EDT, over an hour before the first snapshot
+# is due. That is not slack for its own sake. GitHub's scheduler fires late as a matter of
+# course, and on 2026-08-19 a 13:20 UTC trigger did not start until 13:59, losing the 09:30 and
+# 09:45 snapshots outright. The 0DTE gamma profile is at its most informative right at the open,
+# while it is still spread across strikes rather than collapsed onto the at-the-money spike, so
+# those are the worst two of the day to lose. Starting an hour early means even a 45-minute
+# delay still lands before 09:25 ET.
+#
+# Idling costs nothing that matters: gex_session.py sleeps to the next quarter hour and
+# fetch_gex_poll.py refuses anything before 09:25 ET, so an early start does no work. The same
+# margin absorbs the EDT/EST shift — under EST this is 07:20 ET and simply idles longer.
 name: GEX poll (morning)
 
 on:
   schedule:
-    - cron: '20 13 * * 1-5'
+    - cron: '20 12 * * 1-5'
   workflow_dispatch:        # so a run can be triggered by hand to verify the setup
 
 permissions:
@@ -22,7 +28,7 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
