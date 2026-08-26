@@ -51,12 +51,19 @@ jobs:
       - name: Report guard decision
         run: echo "${{ steps.guard.outputs.note }}"
 
-      - name: Fetch intraday bars, daily series, and rebuild features
+      - name: Fetch intraday bars and the daily series
         if: steps.guard.outputs.run == 'true'
         run: |
           python3 fetch_spx_bars.py
           python3 fetch_daily.py
-          python3 build_features.py
+
+      # Separate, and always() — rebuilding features reads only the local archive and touches
+      # no network, so there is no reason for a flaky fetch to skip it. Keeping it on the same
+      # line as the fetches meant a single bad Yahoo response for ^VIX9D silently left the
+      # feature tables two days stale.
+      - name: Rebuild features
+        if: ${{ always() && steps.guard.outputs.run == 'true' }}
+        run: python3 build_features.py
 
       # always(), so a tier that fails still keeps whatever the other tiers fetched. The
       # fetch step only reports failure when every tier was unreachable.

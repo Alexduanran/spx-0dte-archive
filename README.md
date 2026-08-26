@@ -162,6 +162,16 @@ python3 fetch_spx_bars.py           # additive; --force to re-pull, --only 1m to
 python3 fetch_daily.py && python3 build_features.py
 ```
 
+### `^VIX9D` is captured one day at a time
+
+Yahoo has degraded `^VIX9D` to a live quote with no history — a request for any range returns a
+single bar. `fetch_daily.py` therefore folds that one bar into the stored series rather than
+either discarding it (which would let `vix9d`, and the `vix9d_vix` term-structure ratio, quietly
+die) or overwriting hundreds of good bars with it. **This makes the daily VIX9D series
+perishable in the same way gamma exposure is:** each day's value is only obtainable on that day.
+The post-close schedule is what makes it work, since by 16:35 ET the quote is the settled close.
+`^GSPC` and `^VIX` still return full history and are refreshed wholesale.
+
 Everything runs on the standard library plus `curl`. DST is computed from the US rules directly
 rather than via `zoneinfo`, so the scripts work on old Python builds (3.7+) as well as modern
 ones.

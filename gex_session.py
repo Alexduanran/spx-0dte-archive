@@ -80,20 +80,29 @@ def main():
     taken = 0
     while True:
         now = et_now()
-        if now.hour * 60 + now.minute >= cutoff:
+        cur = now.hour * 60 + now.minute
+        if cur >= cutoff:
             break
-        # sleep to the next exact multiple of --every past the hour, so snapshots land on
-        # 09:30 / 09:45 / 10:00 ... regardless of how late the workflow was triggered
-        wait = args.every * 60 - ((now.minute % args.every) * 60 + now.second)
-        time.sleep(wait)
 
-        now = et_now()
-        if now.hour * 60 + now.minute >= cutoff:
+        # The next boundary is a multiple of --every past the hour, so snapshots land on
+        # 09:30 / 09:45 / 10:00 ... however late the workflow was triggered. Decide whether it
+        # is worth waiting for BEFORE sleeping, not after.
+        #
+        # Checking the cutoff only after waking is what cost the 12:45 snapshot every single
+        # day. The morning half took its 12:30 reading, slept the full quarter hour to 12:45,
+        # and only then noticed its 12:35 cutoff and exited — holding the job, and with it the
+        # shared concurrency group, until 12:45:05. The afternoon half had been queued since
+        # 12:10 and could not start until the slot it was meant to cover had already gone by,
+        # so its first reading was 13:00. Nothing looked broken: both jobs reported success.
+        nxt = (cur // args.every + 1) * args.every
+        if nxt >= cutoff:
             break
+        time.sleep(max(1, (nxt - cur) * 60 - now.second))
+
         snapshot()
         taken += 1
         if args.commit:
-            commit(now.strftime('%Y-%m-%d %H:%M ET'))
+            commit(et_now().strftime('%Y-%m-%d %H:%M ET'))
 
     print('gex_session: done, %d snapshots attempted' % taken)
     return 0
