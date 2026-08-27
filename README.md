@@ -119,37 +119,36 @@ against the other across the 09:49/10:19 boundary.
 Three GitHub Actions workflows keep this current. They need no secrets: `GITHUB_TOKEN` with
 `contents: write` is enough to commit back to the repo.
 
-| Workflow | Cron (UTC) | What it does |
+| Workflow | Cron (UTC) | Covers |
 |---|---|---|
-| `gex-morning.yml` | `20 12 * * 1-5` | holds one job open, snapshotting every quarter hour until 12:35 ET |
-| `gex-afternoon.yml` | `10 16 * * 1-5` | same, until 16:10 ET; queues behind the morning half |
-| `bars-eod.yml` | `35 20`, `35 21 * * 1-5` | after the close: intraday bars, daily series, rebuild features |
+| `gex-1-open.yml` | `15 11` + `15 12` | 09:30 → 11:30 ET |
+| `gex-2-midday.yml` | `30 13` + `30 14` | 11:45 → 13:45 ET |
+| `gex-3-close.yml` | `45 15` + `45 16` | 14:00 → 16:00 ET |
+| `bars-eod.yml` | `35 20` + `35 21` | after the close: intraday bars, daily series, features |
 
-Two scheduling details are deliberate and worth not "simplifying" away:
+Three details are deliberate and worth not "simplifying" away:
 
-- **The GEX workflows do not use a `*/15` cron.** GitHub's scheduled triggers are best-effort —
-  under load a `schedule` event routinely fires 5–20 minutes late and can be dropped outright,
-  which would leave the series ragged and gapped. Instead each run holds a single job open for
-  its half of the session and sleeps to each quarter hour itself, so only the *start* depends on
-  the scheduler. The session is split in two because a job is capped at **6 hours**.
-- **Both GEX crons start over an hour early on purpose.** Only the start depends on the
-  scheduler, but that start still has to arrive before the first snapshot is due. Measured
-  lateness on this repo: a `40 16` afternoon trigger started at 17:02, and a `20 13` morning
-  trigger started at 13:59 — 39 minutes late, which cost the 09:30 and 09:45 snapshots. Those
-  are the two worst of the day to lose, because the 0DTE profile is at its most informative
-  before it collapses onto the at-the-money spike. The crons now fire at 12:20 and 16:10 UTC so
-  that even a 45-minute delay lands in time; the early start does no work and costs nothing,
-  since the poller refuses anything outside 09:25–16:05 ET. The afternoon run simply queues on
-  the shared concurrency group until the morning half exits at 12:35 ET.
-- **The crons are set for EDT and tolerate EST.** A fixed UTC time drifts an hour twice a year.
-  The GEX jobs simply start an hour early under EST and idle — `fetch_gex_poll.py` refuses
-  anything outside 09:25–16:05 ET regardless. The bars job registers both 20:35 and 21:35 UTC
-  and its guard step drops anything landing before 16:20 ET — so under EST the early cron is
-  dropped and the late one runs, while under EDT **both** pass and the job runs twice. That
-  slack is deliberate: a tighter upper bound would drop a genuinely late trigger, and GitHub's
-  delays are real (an afternoon GEX cron set for 16:40 UTC was observed firing at 17:02). The
-  duplicate run costs about a minute and writes nothing — `fetch_spx_bars.py` is additive and
-  the commit step exits when the tree is clean.
+- **No `*/15` cron.** GitHub's scheduled triggers are best-effort; a `schedule` event routinely
+  fires late and can be dropped outright, which would leave the series ragged and gapped.
+  Instead each run holds a single job open for its segment and sleeps to each quarter hour
+  itself, so only the *start* depends on the scheduler.
+- **Each segment starts about two and a quarter hours early, with a backup cron an hour after
+  the primary.** The start still has to arrive before the segment's first snapshot is due, and
+  it does not reliably. Measured here over one week: the morning trigger ran 54, 55, 57, 55 and
+  66 minutes late, the afternoon one 36–45, a post-close trigger 206 — and on 2026-08-27 the
+  morning trigger never fired at all, costing all thirteen slots from 09:30 to 12:30. The
+  session is in three parts rather than two because a job is capped at **6 hours** and 07:15 to
+  16:10 ET is nearly nine.
+- **The segments overlap on purpose, and that is safe.** Segment 2 starts at 09:30 ET, inside
+  segment 1's window, so a segment whose trigger is dropped is backed up by the next one.
+  Writes are idempotent — `fetch_gex_poll.py` refuses a `(date, time)` it already holds, checked
+  before the 13 MB fetch rather than after — and each segment owns its concurrency group, so a
+  backup firing while its primary still works simply queues and exits on the cutoff.
+
+The crons are UTC and set for EDT. Under EST each starts an hour earlier in ET terms and idles
+longer, which the timeout absorbs; the poller refuses anything outside 09:25–16:05 ET anyway.
+The bars job registers 20:35 and 21:35 with a guard dropping anything before 16:20 ET, so under
+EST the early one is dropped and under EDT both run — the duplicate writes nothing.
 
 Every script self-guards weekends and US market holidays, so a fire on a non-trading day exits
 in milliseconds without touching the network.

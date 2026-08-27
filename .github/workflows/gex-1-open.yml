@@ -1,0 +1,49 @@
+# Segment 1/3 of the 0DTE gamma-exposure session poll: 09:30 -> 11:30 ET.
+#
+# WHY THREE SEGMENTS AND TWO CRONS EACH. Only the *start* of a session job depends on GitHub's
+# scheduler, but that start has to arrive before the segment's first snapshot is due, and it
+# does not reliably. Measured on this repo over one week: the morning trigger ran 54, 55, 57,
+# 55 and 66 minutes late, the afternoon one 36-45 minutes late, a post-close trigger 206 minutes
+# late — and on 2026-08-27 the morning trigger never fired at all, costing all thirteen slots
+# from 09:30 to 12:30. GitHub documents `schedule` as best-effort and it behaves that way.
+#
+# So each segment starts about two and a quarter hours before its first snapshot, and registers
+# a second cron an hour after the first as a backup. One job cannot cover the whole session with
+# that much lead time: GitHub caps a job at 6 hours and 07:15 to 16:10 ET is nearly nine. Hence
+# three.
+#
+# Redundant triggers are safe because writes are idempotent — fetch_gex_poll.py refuses a
+# (date, time) it already holds — and because each segment owns its concurrency group, so a
+# backup firing while the primary still works simply queues, then exits on the cutoff.
+#
+# The crons are UTC and set for EDT; under EST each starts an hour earlier in ET terms and idles
+# longer, which the timeout absorbs. fetch_gex_poll.py refuses anything outside 09:25-16:05 ET
+# regardless, so an early start does no work.
+name: GEX poll (1/3 open)
+
+on:
+  schedule:
+    - cron: '15 11 * * 1-5'    # 07:15 ET under EDT — primary
+    - cron: '15 12 * * 1-5'    # an hour later — backup, in case the primary is dropped
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gex-1
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Poll every 15 minutes until 11:35 ET
+        run: python3 gex_session.py --until 11:35 --commit
+
+      - name: Commit whatever was captured
+        if: always()
+        run: bash .github/commit-archive.sh 'gex segment 1'

@@ -171,6 +171,22 @@ def main():
 
     date = now.strftime('%Y-%m-%d')
     hhmm = now.strftime('%H:%M')
+
+    # summary.csv is append-only, so writing must be idempotent: two runs covering the same
+    # quarter hour would otherwise leave two rows for one moment and quietly corrupt any time
+    # series built from it. Overlap is the normal case now, not the failure case — the session
+    # is split into three segments that deliberately overlap, so a segment whose trigger is
+    # dropped is backed up by the next one starting earlier than its own window.
+    #
+    # Checked before fetch(), not after: the CBOE payload is ~13 MB and there is no reason to
+    # pull it only to throw it away.
+    if os.path.exists(SUMMARY):
+        with open(SUMMARY) as f:
+            if any(r.get('date') == date and r.get('time') == hhmm
+                   for r in csv.DictReader(f)):
+                print('%s %s ET already recorded — skipping' % (date, hhmm))
+                return 0
+
     payload = fetch()
     spot, prof, allnet = build(payload, now.strftime('%y%m%d'))
     if not prof:
@@ -179,19 +195,6 @@ def main():
         return 0
 
     lv = levels(spot, prof)
-
-    # summary.csv is append-only, so writing must be idempotent: two runs that overlap on the
-    # same quarter hour would otherwise leave two rows for one moment and quietly corrupt any
-    # time series built from it. Overlap is not hypothetical — the schedule now runs redundant
-    # triggers precisely so a dropped one does not cost the slot, which means two jobs covering
-    # the same window is the normal case, not the failure case.
-    if os.path.exists(SUMMARY):
-        with open(SUMMARY) as f:
-            if any(r.get('date') == date and r.get('time') == hhmm
-                   for r in csv.DictReader(f)):
-                print('%s %s ET already recorded — skipping' % (date, hhmm))
-                return 0
-
     os.makedirs(PROF, exist_ok=True)
     row = dict(date=date, time=hhmm, spot=round(spot, 2), net_all_expiries=round(allnet), **lv)
     new = not os.path.exists(SUMMARY)
