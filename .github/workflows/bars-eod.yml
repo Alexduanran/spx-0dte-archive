@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: gex-archive        # shares the archive with the GEX workflows — serialise the writers
+  group: bars-eod
   cancel-in-progress: false
 
 jobs:

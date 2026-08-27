@@ -18,7 +18,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: gex-archive        # never let two writers race on summary.csv
+  # One group per workflow, not one shared across all three. A shared group meant a late or
+  # queued run of any workflow blocked the others, and GitHub keeps only one pending run per
+  # group — so a newly triggered run silently cancels an older pending one. With redundant
+  # triggers that hazard is unacceptable. Races on the append-only summary.csv are handled
+  # where they belong: commit-archive.sh rebases and retries, and fetch_gex_poll.py refuses to
+  # write a (date, time) it already holds.
+  group: gex-afternoon
   cancel-in-progress: false
 
 jobs:

@@ -179,6 +179,19 @@ def main():
         return 0
 
     lv = levels(spot, prof)
+
+    # summary.csv is append-only, so writing must be idempotent: two runs that overlap on the
+    # same quarter hour would otherwise leave two rows for one moment and quietly corrupt any
+    # time series built from it. Overlap is not hypothetical — the schedule now runs redundant
+    # triggers precisely so a dropped one does not cost the slot, which means two jobs covering
+    # the same window is the normal case, not the failure case.
+    if os.path.exists(SUMMARY):
+        with open(SUMMARY) as f:
+            if any(r.get('date') == date and r.get('time') == hhmm
+                   for r in csv.DictReader(f)):
+                print('%s %s ET already recorded — skipping' % (date, hhmm))
+                return 0
+
     os.makedirs(PROF, exist_ok=True)
     row = dict(date=date, time=hhmm, spot=round(spot, 2), net_all_expiries=round(allnet), **lv)
     new = not os.path.exists(SUMMARY)
