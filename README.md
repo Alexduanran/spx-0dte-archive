@@ -136,7 +136,8 @@ Three details are deliberate and worth not "simplifying" away:
   the primary.** The start still has to arrive before the segment's first snapshot is due, and
   it does not reliably. Measured here over one week: the morning trigger ran 54, 55, 57, 55 and
   66 minutes late, the afternoon one 36–45, a post-close trigger 206 — and on 2026-08-27 the
-  morning trigger never fired at all, costing all thirteen slots from 09:30 to 12:30. The
+  morning trigger never fired at all, costing the twelve slots from 09:30 to 12:15 — 12:30 onward survived only
+  because the segment was triggered by hand. The
   session is in three parts rather than two because a job is capped at **6 hours** and 07:15 to
   16:10 ET is nearly nine.
 - **The segments overlap on purpose, and that is safe.** Segment 2 starts at 09:30 ET, inside
