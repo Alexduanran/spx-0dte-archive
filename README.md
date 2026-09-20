@@ -119,37 +119,33 @@ against the other across the 09:49/10:19 boundary.
 Three GitHub Actions workflows keep this current. They need no secrets: `GITHUB_TOKEN` with
 `contents: write` is enough to commit back to the repo.
 
-| Workflow | Cron (UTC) | Covers |
+| Workflow | Cron (UTC) | Role |
 |---|---|---|
-| `gex-1-open.yml` | `15 11` + `15 12` | 09:30 → 11:30 ET |
-| `gex-2-midday.yml` | `30 13` + `30 14` | 11:45 → 13:45 ET |
-| `gex-3-close.yml` | `45 15` + `45 16` | 14:00 → 16:00 ET |
+| `gex-1-open.yml` | `15 11` + `15 12` | earliest start; polls to the close |
+| `gex-2-midday.yml` | `30 13` + `30 14` | later start; polls to the close |
+| `gex-3-close.yml` | `45 15` + `45 16` | last start; polls to the close |
 | `bars-eod.yml` | `35 20` + `35 21` | after the close: intraday bars, daily series, features |
 
-Three details are deliberate and worth not "simplifying" away:
+**All three gamma waves run to the close and differ only in when they are scheduled to start.**
+Whichever one is handed a runner first covers the rest of the session; the later ones exist in
+case it never is. Overlap is free — `fetch_gex_poll.py` refuses a `(date, time)` it already
+holds, checked before the 13 MB fetch — and each wave owns its concurrency group.
 
-- **No `*/15` cron.** GitHub's scheduled triggers are best-effort; a `schedule` event routinely
-  fires late and can be dropped outright, which would leave the series ragged and gapped.
-  Instead each run holds a single job open for its segment and sleeps to each quarter hour
-  itself, so only the *start* depends on the scheduler.
-- **Each segment starts about two and a quarter hours early, with a backup cron an hour after
-  the primary.** The start still has to arrive before the segment's first snapshot is due, and
-  it does not reliably. Measured here over one week: the morning trigger ran 54, 55, 57, 55 and
-  66 minutes late, the afternoon one 36–45, a post-close trigger 206 — and on 2026-08-27 the
-  morning trigger never fired at all, costing the twelve slots from 09:30 to 12:15 — 12:30 onward survived only
-  because the segment was triggered by hand. The
-  session is in three parts rather than two because a job is capped at **6 hours** and 07:15 to
-  16:10 ET is nearly nine.
-- **The segments overlap on purpose, and that is safe.** Segment 2 starts at 09:30 ET, inside
-  segment 1's window, so a segment whose trigger is dropped is backed up by the next one.
-  Writes are idempotent — `fetch_gex_poll.py` refuses a `(date, time)` it already holds, checked
-  before the 13 MB fetch rather than after — and each segment owns its concurrency group, so a
-  backup firing while its primary still works simply queues and exits on the cutoff.
+This replaced fixed per-wave windows, which converted the scheduler's lateness into permanent
+holes. On 2026-09-18 wave 1 got a runner at 11:00 ET, 3.8 hours after its cron, took the 11:15
+and 11:30 snapshots and then exited at its 11:35 window edge with a working runner in hand;
+nothing covered 11:45 to 13:00. Eleven of 27 slots survived. Replayed against the same start
+times, running to the close would have taken 20. Across 2026-08-31 to 09-18 the change lifts
+captured slots from 123/378 to an estimated 234/378 — 33% to 62%.
 
-The crons are UTC and set for EDT. Under EST each starts an hour earlier in ET terms and idles
-longer, which the timeout absorbs; the poller refuses anything outside 09:25–16:05 ET anyway.
-The bars job registers 20:35 and 21:35 with a guard dropping anything before 16:20 ET, so under
-EST the early one is dropped and under EDT both run — the duplicate writes nothing.
+**The remaining 38% is the morning, and it cannot be fixed here.** No runner has arrived before
+11:00 ET on any day in that sample. Only the start depends on GitHub's scheduler and it is not
+dependable: triggers on this repo have arrived 2.6–5.2 hours late routinely, 7–10 hours late on
+2026-08-28, and on 2026-08-27 and 08-31 not at all. Adding margin cannot close this, because a
+job cannot both start hours early and still be alive at the close — the cap is 6 hours. Morning
+gamma needs a scheduler that fires on time; `schedule` is documented best-effort and behaves
+that way. Post-close bars are unaffected and have not missed a day: lateness costs them nothing
+and `fetch_spx_bars.py` backfills anything inside Yahoo's 30-day window.
 
 Every script self-guards weekends and US market holidays, so a fire on a non-trading day exits
 in milliseconds without touching the network.

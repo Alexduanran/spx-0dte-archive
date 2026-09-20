@@ -1,25 +1,32 @@
-# Segment 2/3 of the 0DTE gamma-exposure session poll: 11:45 -> 13:45 ET.
+# Wave 2 of 3 of the 0DTE gamma-exposure session poll.
 #
-# WHY THREE SEGMENTS AND TWO CRONS EACH. Only the *start* of a session job depends on GitHub's
-# scheduler, but that start has to arrive before the segment's first snapshot is due, and it
-# does not reliably. Measured on this repo over one week: the morning trigger ran 54, 55, 57,
-# 55 and 66 minutes late, the afternoon one 36-45 minutes late, a post-close trigger 206 minutes
-# late — and on 2026-08-27 the morning trigger never fired at all, costing all thirteen slots
-# from 09:30 to 12:30. GitHub documents `schedule` as best-effort and it behaves that way.
+# ALL THREE WAVES RUN TO THE CLOSE. They differ only in when they are scheduled to start, and
+# that is the whole design: whichever wave actually gets a runner first covers the rest of the
+# session, and the later ones are there in case it never does.
 #
-# So each segment starts about two and a quarter hours before its first snapshot, and registers
-# a second cron an hour after the first as a backup. One job cannot cover the whole session with
-# that much lead time: GitHub caps a job at 6 hours and 07:15 to 16:10 ET is nearly nine. Hence
-# three.
+# This replaced fixed per-wave windows, which turned GitHub's lateness into permanent holes.
+# On 2026-09-18 wave 1 was handed a runner at 11:00 ET — 3.8 hours after its cron — took the
+# 11:15 and 11:30 snapshots, and then exited at its 11:35 cutoff with a perfectly good runner
+# in hand, because 11:35 was where its window happened to end. Nothing then covered 11:45
+# through 13:00, which is when wave 2 finally started. Eleven of 27 slots survived the day.
+# With every wave running to the close, that same 11:00 start would have carried 11:15 to
+# 16:00 on its own.
 #
-# Redundant triggers are safe because writes are idempotent — fetch_gex_poll.py refuses a
-# (date, time) it already holds — and because each segment owns its concurrency group, so a
-# backup firing while the primary still works simply queues, then exits on the cutoff.
+# WHY THE LATENESS IS THE DOMINANT CONSTRAINT. Only the start depends on GitHub's scheduler,
+# and it is not dependable: measured on this repo, triggers have arrived 2.6 to 5.2 hours late
+# routinely, 7 to 10 hours late on 2026-08-28, and on 2026-08-27 and 08-31 not at all. GitHub
+# documents `schedule` as best-effort. Adding margin cannot fix this — the margin needed is
+# unbounded, and a job cannot both start hours early and still be alive at the close, because
+# a job is capped at 6 hours. The morning in particular is not recoverable here; it needs a
+# scheduler that actually fires on time.
 #
-# The crons are UTC and set for EDT; under EST each starts an hour earlier in ET terms and idles
-# longer, which the timeout absorbs. fetch_gex_poll.py refuses anything outside 09:25-16:05 ET
-# regardless, so an early start does no work.
-name: GEX poll (2/3 midday)
+# Overlap between waves is free: fetch_gex_poll.py refuses a (date, time) it already holds and
+# checks that before the 13 MB fetch, and each wave owns its concurrency group. A wave killed
+# by the timeout loses nothing either, because --commit pushes after every snapshot.
+#
+# The crons are UTC and set for EDT; under EST each starts an hour earlier in ET terms. The
+# poller refuses anything outside 09:25-16:05 ET, so an early start does no work.
+name: GEX poll (wave 2 of 3)
 
 on:
   schedule:
@@ -41,8 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Poll every 15 minutes until 13:50 ET
-        run: python3 gex_session.py --until 13:50 --commit
+      - name: Poll every 15 minutes until the close
+        run: python3 gex_session.py --until 16:10 --commit
 
       - name: Commit whatever was captured
         if: always()
