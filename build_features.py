@@ -121,6 +121,40 @@ def load_yahoo(name):
     return out
 
 
+def bucket_15m(bars):
+    """
+    Fold finer bars into 15-minute buckets on the session grid (09:30, 09:45, 10:00 ...).
+
+    DERIVED, NOT ARCHIVED. A 15-minute bar is exactly three 5-minute bars, and the 5-minute tier
+    is already stored, so a spx-15m/ folder would only duplicate something recomputable for free
+    and without a network call. This archive stores what expires; this does not.
+
+    The 16:00 bar is folded into the 15:45 bucket rather than becoming a bucket of its own. Yahoo
+    emits it as a one-bar closing print, so left alone it would appear as a 27th "15-minute" bar
+    holding a single minute — and the 15:45 bar would close at 15:55 instead of at the session
+    close, quietly losing the settle from every day in the series.
+    """
+    out = {}
+    for t, o, h, l, c in bars:
+        k = t - t % 15
+        if k >= 960:                      # 16:00 and anything past it belongs to 15:45
+            k = 945
+        if k not in out:
+            out[k] = [k, o, h, l, c]
+        else:
+            b = out[k]
+            b[2] = max(b[2], h)
+            b[3] = min(b[3], l)
+            b[4] = c                      # bars arrive in order, so the last close wins
+    return [tuple(out[k]) for k in sorted(out)]
+
+
+def load_15m(date):
+    """15-minute bars for one date, from the finest tier that holds it."""
+    res, bb = load_bars(date, prefer=('5m', '1m'))
+    return (res, bucket_15m(bb)) if bb else (None, None)
+
+
 # ---------------------------------------------------------------- daily table
 
 def build_daily():
@@ -187,7 +221,8 @@ def build_daily():
 
 # ---------------------------------------------------------------- intraday table
 
-def build_intraday(res='5m', out_name='intraday.csv', min_bars=30, continuous=False):
+def build_intraday(res='5m', out_name='intraday.csv', min_bars=30, continuous=False,
+                   loader=None, reset=(20, 50), dates_from=None):
     """
     One row per (date, bar) with the indicator family computed on `res` bars, so a decision
     made at 11:15 is scored with what was knowable at 11:15 and nothing later.
@@ -200,11 +235,19 @@ def build_intraday(res='5m', out_name='intraday.csv', min_bars=30, continuous=Fa
     value from the first bar of the day, at the cost of folding the overnight gap in. Neither is
     right in the abstract — use the reset pair to describe the session on its own terms, and the
     continuous pair when a signal has to exist early in the day.
+
+    `reset` selects which reset-each-morning EMAs to emit, and at 15 minutes that is not a style
+    choice. A session holds only 26 fifteen-minute bars, so a reset EMA50 can never acquire a
+    value — the column would be empty on every row of every day. An always-empty column is worse
+    than an absent one: it reads as "no signal here" rather than "this cannot exist", and someone
+    will eventually filter on it. So 15-minute output carries reset EMA20 (first value 14:15 ET)
+    and leans on the continuous pair for EMA50.
     """
-    files = sorted(p.stem for p in (ROOT / f'spx-{res}').glob('*.csv'))
+    load = loader or (lambda d: load_bars(d, prefer=(res,)))
+    files = sorted(p.stem for p in (ROOT / f'spx-{dates_from or res}').glob('*.csv'))
     days = []
     for d in files:
-        _, bb = load_bars(d, prefer=(res,))
+        _, bb = load(d)
         if bb and len(bb) >= min_bars:
             days.append((d, bb))
     if not days:
@@ -233,13 +276,17 @@ def build_intraday(res='5m', out_name='intraday.csv', min_bars=30, continuous=Fa
             lo = l if lo is None else min(lo, l)
             if i:
                 plen += abs(cl[i] - cl[i - 1])
-            row = dict(
-                date=d, time='%02d:%02d' % (t // 60, t % 60), close=c,
-                ema20=round(e20[i], 2) if e20[i] else None,
-                ema50=round(e50[i], 2) if e50[i] else None,
-                px_vs_ema20=round(c - e20[i], 2) if e20[i] else None,
-                px_vs_ema50=round(c - e50[i], 2) if e50[i] else None,
-                ema20_vs_50=round(e20[i] - e50[i], 2) if e20[i] and e50[i] else None,
+            row = dict(date=d, time='%02d:%02d' % (t // 60, t % 60), close=c)
+            if 20 in reset:
+                row['ema20'] = round(e20[i], 2) if e20[i] else None
+                row['px_vs_ema20'] = round(c - e20[i], 2) if e20[i] else None
+            if 50 in reset:
+                row['ema50'] = round(e50[i], 2) if e50[i] else None
+                row['px_vs_ema50'] = round(c - e50[i], 2) if e50[i] else None
+            if 20 in reset and 50 in reset:
+                row['ema20_vs_50'] = (round(e20[i] - e50[i], 2)
+                                      if e20[i] and e50[i] else None)
+            row.update(
                 rsi14=round(r14[i], 2) if r14[i] else None,
                 atr14=round(a14[i], 3) if a14[i] else None,
                 sofar_range=round(hi - lo, 2),
@@ -270,3 +317,5 @@ if __name__ == '__main__':
     build_daily()
     build_intraday('5m', 'intraday.csv', min_bars=30)
     build_intraday('1m', 'intraday_1m.csv', min_bars=100, continuous=True)
+    build_intraday('15m', 'intraday_15m.csv', min_bars=12, continuous=True,
+                   loader=load_15m, reset=(20,), dates_from='5m')

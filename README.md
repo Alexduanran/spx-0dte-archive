@@ -39,6 +39,7 @@ XSP is one tenth of SPX; multiply these prices by 0.1 for XSP-quoted comparisons
 ├── features/intraday.csv the same indicators computed on 5-minute bars, so an 11:15 reading
 │                         is scored with 11:15 information
 ├── features/intraday_1m.csv  the same at 1-minute resolution — two EMA pairs, see below
+├── features/intraday_15m.csv the same on 15-minute buckets aggregated from the 5-minute tier
 ├── gex/summary.csv       one row per snapshot — the derived gamma levels
 └── gex/profile/          near-the-money gamma/OI profile at each snapshot
 ```
@@ -97,22 +98,39 @@ holds the by-strike detail within ±2% of spot: `cg`/`pg` call/put gamma exposur
 everywhere except a narrow band around spot — that is the expiry gamma spike, not corruption.
 Compare like with like, or days will not be comparable.
 
-## Two EMA pairs in `features/intraday_1m.csv`
+## EMAs, and the two ways they can be wrong
 
-`ema20`/`ema50` restart every morning. No overnight gap leaks into them, but they are undefined
-until enough bars have accumulated — on 1-minute bars that is **09:49** for EMA20 and **10:19**
-for EMA50, which is after a 15-minute opening-range entry has already been taken. Across the
-archive they carry a value on 95.1% and 87.4% of bars.
+Each `features/intraday*.csv` carries EMA20 and EMA50 on its own bar size. The same name means a
+different thing per tier, because the lookback is in bars, not minutes:
 
-`ema20_cont`/`ema50_cont` run unbroken across the whole archive, so they hold a value from the
-first bar of the day (99.8% / 99.5% coverage) at the cost of folding the overnight gap in. On
-2026-08-18 the index opened at 7704.16 after a 7746.14 close, and `ema20_cont` was still sitting
-at 7744.52 — forty points above spot, describing yesterday rather than today. By the close the
-two pairs agree exactly, the seed having long since washed out.
+| File | Bars | EMA20 spans | EMA50 spans | Bars per session |
+|---|---|---|---|---|
+| `intraday_1m.csv` | 1-minute | 20 min | 50 min | 391 |
+| `intraday.csv` | 5-minute | 100 min | 250 min | 79 |
+| `intraday_15m.csv` | 15-minute | 300 min | 750 min | 26 |
 
-Neither is correct in the abstract. Use the reset pair to describe a session on its own terms,
-and the continuous pair when a signal has to exist early in the day — and never compare one
-against the other across the 09:49/10:19 boundary.
+**Two variants, and neither is correct in the abstract.** `ema20`/`ema50` restart every morning:
+no overnight gap leaks in, but they are undefined until enough bars accumulate. `ema20_cont`/
+`ema50_cont` run unbroken across the whole archive, so they hold a value from the first bar of
+the day at the cost of folding the overnight gap in. On 2026-08-18 the index opened at 7704.16
+after a 7746.14 close and `ema20_cont` still read 7744.52 — forty points above spot, describing
+yesterday. By the close the two agree exactly, the seed having washed out. Use the reset pair to
+describe a session on its own terms, the continuous pair when a signal must exist early, and
+never compare one against the other across the point where the reset pair becomes defined.
+
+**At 15 minutes a reset EMA50 cannot exist, so the column is absent rather than empty.** A
+session holds 26 fifteen-minute bars; fifty of them is nearly two days. `intraday_15m.csv`
+therefore carries reset EMA20 only — first value at **14:15 ET**, 26.9% of rows — and the
+continuous pair for everything else (99.2% / 97.9%). An always-empty column would have been worse
+than an absent one: it reads as "no signal here" rather than "this cannot exist", and something
+would eventually filter on it. At 1 minute both reset EMAs are usable, from 09:49 and 10:19.
+
+**The 15-minute bars are derived, not archived.** A 15-minute bar is exactly three 5-minute bars
+and the 5-minute tier is already stored, so a `spx-15m/` folder would duplicate something
+recomputable for free and offline. The 16:00 closing print is folded into the 15:45 bucket rather
+than forming a 27th bar of its own — otherwise every day's 15:45 bar would close at 15:55 and the
+series would quietly lose the settle. Verified against the finer tiers: the aggregated highs,
+lows and closes match 1-minute exactly.
 
 ## Automation
 
