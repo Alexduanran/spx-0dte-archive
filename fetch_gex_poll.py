@@ -41,6 +41,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -84,20 +85,44 @@ def market_is_open(now):
     return True, ''
 
 
-def fetch():
-    fd, path = tempfile.mkstemp(suffix='.json')
-    os.close(fd)
-    r = subprocess.run(['curl', '-s', '--max-time', '120', '-H', 'User-Agent: ' + UA,
-                        URL, '-o', path], capture_output=True)
-    if r.returncode != 0 or os.path.getsize(path) < 100000:
-        os.unlink(path)
-        raise RuntimeError('CBOE fetch failed (rc=%s, size=%s)'
-                           % (r.returncode, os.path.getsize(path) if os.path.exists(path) else 0))
-    try:
-        with open(path) as f:
-            return json.load(f)
-    finally:
-        os.unlink(path)
+def fetch(attempts=3):
+    """
+    Pull the delayed-quote feed.
+
+    `-L` IS LOAD-BEARING. On 2026-09-24, mid-session, CBOE began answering this path with a
+    307 to cdn-api.cboe.com. curl without -L writes the 169-byte redirect body and exits 0, so
+    the old code saw rc=0 with a tiny file and raised — every quarter hour, for the rest of that
+    day and all of 2026-09-25, which cost 20 slots and then a whole session. The runs all
+    reported success; only the archive showed anything was wrong. Following the redirect rather
+    than hard-coding the new host means the next move costs nothing either.
+
+    Retried, because a single bad response should cost a retry and not a slot: this feed has no
+    history, so an uncaptured quarter hour is gone for good. The HTTP status is carried into the
+    error message — diagnosing the 307 from `size=0` alone took far longer than it should have.
+    """
+    last = ''
+    for attempt in range(1, attempts + 1):
+        fd, path = tempfile.mkstemp(suffix='.json')
+        os.close(fd)
+        r = subprocess.run(['curl', '-sL', '--max-time', '120', '-w', '%{http_code}',
+                            '-H', 'User-Agent: ' + UA, URL, '-o', path],
+                           capture_output=True, text=True)
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        code = (r.stdout or '').strip() or '?'
+        if r.returncode == 0 and size >= 100000:
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except ValueError as exc:
+                last = 'HTTP %s, %d bytes, unparseable (%s)' % (code, size, exc)
+            finally:
+                os.unlink(path)
+        else:
+            os.unlink(path)
+            last = 'rc=%s HTTP %s size=%s' % (r.returncode, code, size)
+        if attempt < attempts:
+            time.sleep(attempt * 10)
+    raise RuntimeError('CBOE fetch failed after %d attempts (%s)' % (attempts, last))
 
 
 def build(payload, today_yymmdd):
