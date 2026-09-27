@@ -1,0 +1,88 @@
+# Audit what the archive actually holds, and try to repair the 1-minute tier before complaining.
+#
+# WHY A SEPARATE JOB WATCHES THE OTHER ONES. Twice the collection has broken while every run
+# reported success — the schedule firing after the close on 2026-08-28, and CBOE starting to
+# answer with a 307 on 2026-09-24 — and both took a week to notice. A green dashboard says a job
+# ran, not that data landed. This reads the archive instead.
+#
+# IT AUDITS THE WHOLE 30-DAY WINDOW, NOT YESTERDAY. That is deliberate: this check runs on the
+# same unreliable scheduler as everything else here, so it must stay useful when it is the thing
+# that gets dropped. Auditing the full 1-minute recovery window means one run that does land
+# still catches every hole that is still fixable, however many fires were missed.
+#
+# IT REPAIRS BEFORE IT ALERTS. A 1-minute hole inside the window is simply re-fetchable, so the
+# first response is to re-run the fetch rather than page anyone — which also makes this a second,
+# independent daily attempt at the one tier that must not be lost. Only a hole that survives
+# that becomes an issue.
+#
+# Gamma exposure is reported but never fails the run: it has no historical source, so by the
+# time this check sees a gap it is already permanent and there is nothing to ask anyone to do.
+name: Archive health check
+
+on:
+  schedule:
+    - cron: '17 3 * * *'     # ~23:17 ET, after the post-close job has had its two tries
+    - cron: '47 13 * * *'    # ~09:47 ET, a second look on the following morning
+  workflow_dispatch:
+
+permissions:
+  contents: write            # the self-heal step commits recovered bars
+  issues: write              # and raises or clears the standing alert
+
+concurrency:
+  group: health-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # `| tee` would hand the step tee's exit status and hide the failure — GitHub's bash runs
+      # with -e but not pipefail — so the status is captured explicitly.
+      - name: Audit the archive
+        id: audit
+        continue-on-error: true
+        run: |
+          python3 healthcheck.py > report.txt 2>&1; rc=$?
+          cat report.txt
+          exit $rc
+
+      - name: Re-fetch bars to close the gap
+        if: steps.audit.outcome == 'failure'
+        run: |
+          python3 fetch_spx_bars.py
+          python3 fetch_daily.py || echo "daily series incomplete — not fatal, features still rebuild"
+          python3 build_features.py
+          bash .github/commit-archive.sh 'health check backfill'
+
+      - name: Re-audit after the repair attempt
+        id: reaudit
+        if: steps.audit.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          python3 healthcheck.py > report.txt 2>&1; rc=$?
+          cat report.txt
+          exit $rc
+
+      - name: Raise or update the alert
+        if: steps.audit.outcome == 'failure' && steps.reaudit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/alert.sh
+
+      - name: Clear the alert
+        if: steps.audit.outcome == 'success' || steps.reaudit.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/alert.sh --resolve
+
+      - name: Keep the report with the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-report
+          path: report.txt
+          if-no-files-found: warn

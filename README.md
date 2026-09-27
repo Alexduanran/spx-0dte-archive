@@ -147,6 +147,37 @@ gamma needs a scheduler that fires on time; `schedule` is documented best-effort
 that way. Post-close bars are unaffected and have not missed a day: lateness costs them nothing
 and `fetch_spx_bars.py` backfills anything inside Yahoo's 30-day window.
 
+### The health check is the thing that notices
+
+`health-check.yml` runs `healthcheck.py` twice a day and is the only part of this repo that reads
+the archive rather than trusting the dashboard. It exists because a green run means a job
+executed, not that data landed — and twice that distinction cost a week. On 2026-08-28 the
+schedule fired after the close and six green runs captured nothing; on 2026-09-24 CBOE began
+answering with a 307, curl was not following redirects, and every fetch failed its size guard,
+again behind six green runs.
+
+Three properties matter more than the checking itself:
+
+- **It audits the whole 30-day window, not yesterday.** It runs on the same unreliable scheduler
+  as everything else, so it has to stay useful when it is the thing that gets dropped. One run
+  that does land catches every hole still inside the recovery window.
+- **It repairs before it alerts.** A 1-minute gap inside 30 days is re-fetchable, so the first
+  response is to re-run `fetch_spx_bars.py` — which also makes this a second, independent daily
+  attempt at the tier that must not be lost. Only a gap that survives the repair opens an issue,
+  and that issue is reused and self-closing rather than one per fire.
+- **It never fails on gamma.** Gamma has no historical source, so by the time the check sees a
+  gap it is already permanent. Alerting on it would be noise with no remedy, so it is reported
+  and nothing more.
+
+The trading calendar comes from Yahoo's daily `^GSPC` series, not a holiday table. Asking the
+archive which days *should* exist is circular — if collection stopped entirely then every tier
+is missing the date, and a table-free check would shrug and call it a holiday.
+
+```bash
+python3 healthcheck.py            # audit the 30-day 1-minute window
+python3 healthcheck.py --days 60  # widen it into 5-minute territory
+```
+
 Every script self-guards weekends and US market holidays, so a fire on a non-trading day exits
 in milliseconds without touching the network.
 
