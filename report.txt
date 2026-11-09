@@ -2,14 +2,9 @@
   utc = datetime.utcnow()
 /home/runner/work/spx-0dte-archive/spx-0dte-archive/healthcheck.py:94: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
   out.append(datetime.utcfromtimestamp(ts + off).strftime('%Y-%m-%d'))
-1-minute audit, 2026-10-05 → 2026-11-02  (21 sessions)
+1-minute audit, 2026-10-12 → 2026-11-09  (21 sessions)
 
   date        1m    5m   1h   GEX    1m state
-  2026-10-05   391    79    8   0/27   ok
-  2026-10-06   391    79    8  12/27   ok
-  2026-10-07   391    79    8   9/27   ok
-  2026-10-08   391    79    8   9/27   ok
-  2026-10-09   391    79    8  11/27   ok
   2026-10-12   391    79    8   0/27   ok
   2026-10-13   391    79    8   7/27   ok
   2026-10-14   391    79    8  17/27   ok
@@ -25,10 +20,15 @@
   2026-10-28   391    79    8  12/27   ok
   2026-10-29   391    79    8  11/27   ok
   2026-10-30   391    79    8  12/27   ok
-  2026-11-02     —     —    —   1/27   MISSING
+  2026-11-02   391    79    8   1/27   ok
+  2026-11-03   391    79    8  11/27   ok
+  2026-11-04   391    79    8  10/27   ok
+  2026-11-05   391    79    8   9/27   ok
+  2026-11-06   391    79    8  13/27   ok
+  2026-11-09     —     —    —   0/27   MISSING
 
-GEX (informational — no historical source, so a gap here is already permanent): 243/567 slots, 43%
-  sessions with no gamma at all: 2026-10-05, 2026-10-12
+GEX (informational — no historical source, so a gap here is already permanent): 245/567 slots, 43%
+  sessions with no gamma at all: 2026-10-12, 2026-11-09
 
-FAIL: 1 session(s) missing or truncated at 1-minute: 2026-11-02
+FAIL: 1 session(s) missing or truncated at 1-minute: 2026-11-09
 These are still inside Yahoo's 30-day window, so `python3 fetch_spx_bars.py` should recover them.
