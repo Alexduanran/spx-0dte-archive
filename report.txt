@@ -2,7 +2,7 @@
   utc = datetime.utcnow()
 /home/runner/work/spx-0dte-archive/spx-0dte-archive/healthcheck.py:94: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
   out.append(datetime.utcfromtimestamp(ts + off).strftime('%Y-%m-%d'))
-1-minute audit, 2026-10-26 → 2026-11-23  (21 sessions)
+1-minute audit, 2026-10-26 → 2026-11-24  (22 sessions)
 
   date        1m    5m   1h   GEX    1m state
   2026-10-26   391    79    8  11/27   ok
@@ -25,10 +25,11 @@
   2026-11-18   391    79    8   7/27   ok
   2026-11-19   390    79    8   7/27   ok
   2026-11-20   391    79    8   0/27   ok
-  2026-11-23     —     —    —   0/27   MISSING
+  2026-11-23   391    79    8   0/27   ok
+  2026-11-24     —     —    —   0/27   MISSING
 
-GEX (informational — no historical source, so a gap here is already permanent): 162/567 slots, 29%
-  sessions with no gamma at all: 2026-11-09, 2026-11-16, 2026-11-20, 2026-11-23
+GEX (informational — no historical source, so a gap here is already permanent): 162/594 slots, 27%
+  sessions with no gamma at all: 2026-11-09, 2026-11-16, 2026-11-20, 2026-11-23, 2026-11-24
 
-FAIL: 1 session(s) missing or truncated at 1-minute: 2026-11-23
+FAIL: 1 session(s) missing or truncated at 1-minute: 2026-11-24
 These are still inside Yahoo's 30-day window, so `python3 fetch_spx_bars.py` should recover them.
